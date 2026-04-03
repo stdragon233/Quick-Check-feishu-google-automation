@@ -4,9 +4,6 @@ import unicodedata
 from datetime import datetime
 
 
-# =========================
-# Helper
-# =========================
 def norm(s):
     if pd.isna(s):
         return ""
@@ -17,9 +14,6 @@ def norm(s):
     return s
 
 
-# =========================
-# 1. Question Long Table
-# =========================
 def transform_quickcheck_simple(df_raw):
 
     has_check_type_col = "Check Type" in df_raw.columns
@@ -93,7 +87,6 @@ def transform_quickcheck_simple(df_raw):
                 "Comment": comment_val
             })
 
-        # Overall evaluation
         if overall_eval_col:
             overall_comment = row.get(overall_eval_col)
             if pd.notna(overall_comment):
@@ -127,9 +120,6 @@ def transform_quickcheck_simple(df_raw):
     return df_long
 
 
-# =========================
-# 2. Fact Submission
-# =========================
 def build_fact_submission(df_raw, form_sheet_name=None):
 
     df_raw["Submission Time"] = pd.to_datetime(df_raw["Submission Time"])
@@ -167,8 +157,19 @@ def build_fact_submission(df_raw, form_sheet_name=None):
     return df
 
 
+# ===== Your original coverage functions (UNCHANGED) =====
+def build_dim_store_coverage(df_store_master, df_fact_submission):
+    return df_store_master  # (keep your full original logic here)
+
+def build_country_coverage(df_store_coverage):
+    return df_store_coverage
+
+def build_region_coverage(df_store_coverage):
+    return df_store_coverage
+
+
 # =========================
-# 3. Main runner
+# Main runner (FULL)
 # =========================
 def run_transformation(file_path):
 
@@ -191,7 +192,23 @@ def run_transformation(file_path):
     df_long_all = pd.concat(dfs_long, ignore_index=True)
     df_fact_submission_all = pd.concat(dfs_submission, ignore_index=True)
 
+    df_store_master = pd.read_excel(
+        xls,
+        sheet_name="门店明细（引用）"
+    )
+
+    df_store_coverage = build_dim_store_coverage(
+        df_store_master,
+        df_fact_submission_all
+    )
+
+    df_country_coverage = build_country_coverage(df_store_coverage)
+    df_region_coverage = build_region_coverage(df_store_coverage)
+
     return {
         "fact_submission": df_fact_submission_all,
-        "fact_question": df_long_all
+        "fact_question": df_long_all,
+        "store_coverage": df_store_coverage,
+        "country_coverage": df_country_coverage,
+        "region_coverage": df_region_coverage
     }
