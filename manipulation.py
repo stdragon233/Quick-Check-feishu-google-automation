@@ -1,0 +1,197 @@
+import pandas as pd
+import re
+import unicodedata
+from datetime import datetime
+
+
+# =========================
+# Helper
+# =========================
+def norm(s):
+    if pd.isna(s):
+        return ""
+    s = str(s).lower().strip()
+    s = ''.join(c for c in unicodedata.normalize('NFKD', s) if not unicodedata.combining(c))
+    s = re.sub(r'[^\w\s]', '', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+# =========================
+# 1. Question Long Table
+# =========================
+def transform_quickcheck_simple(df_raw):
+
+    has_check_type_col = "Check Type" in df_raw.columns
+
+    question_cols = [c for c in df_raw.columns if re.match(r'^\s*\d+\.\d+', str(c))]
+    all_comment_cols = [c for c in df_raw.columns if 'comment' in c.lower()]
+
+    overall_eval_cols = [c for c in df_raw.columns if "overall evaluation" in c.lower()]
+    overall_eval_col = overall_eval_cols[0] if overall_eval_cols else None
+
+    comment_norm = {c: norm(c) for c in all_comment_cols}
+
+    rows = []
+
+    for _, row in df_raw.iterrows():
+
+        result_id = row.get('Record Number')
+        submission_time = row.get('Submission Time')
+
+        if has_check_type_col:
+            check_type = row.get("Check Type")
+            check_type = "Self-check" if pd.isna(check_type) else str(check_type).strip()
+        else:
+            check_type = "Self-check"
+
+        for qcol in question_cols:
+
+            m = re.match(r'^\s*(\d+\.\d+)\s*(.*)$', str(qcol))
+            qid = m.group(1) if m else ""
+            qtext = m.group(2).strip() if m else str(qcol)
+            qtext_norm = norm(qtext)
+
+            matched_comments = [c for c, cn in comment_norm.items() if qtext_norm and qtext_norm in cn]
+
+            comment_val = None
+            for c in matched_comments:
+                v = row.get(c)
+                if pd.notna(v) and str(v).strip() != "":
+                    comment_val = str(v).strip()
+                    break
+
+            result_val = row.get(qcol)
+
+            if pd.isna(result_val) and comment_val is None:
+                continue
+
+            qtype_digit = qid.split('.')[0] if qid else ''
+            qtype_map = {
+                "1": "Sales",
+                "2": "Delivery",
+                "3": "Aftersales",
+                "4": "Marketing&UserOperation",
+                "5": "StaffDemeanor"
+            }
+            qtype = qtype_map.get(qtype_digit, "Other")
+
+            rows.append({
+                "RecordID": f"{result_id}_{qid}",
+                "ResultID": result_id,
+                "SubmissionTime": submission_time,
+                "CheckType": check_type,
+                "Region": row.get("Region"),
+                "Country/Region": row.get("Country/region"),
+                "City": row.get("City"),
+                "StoreName": row.get("Store Name"),
+                "Creator": row.get("Creator"),
+                "QuestionID": qid,
+                "QuestionType": qtype,
+                "QuestionText": qtext,
+                "Result": result_val,
+                "Comment": comment_val
+            })
+
+        # Overall evaluation
+        if overall_eval_col:
+            overall_comment = row.get(overall_eval_col)
+            if pd.notna(overall_comment):
+                rows.append({
+                    "RecordID": f"{result_id}_0.0",
+                    "ResultID": result_id,
+                    "SubmissionTime": submission_time,
+                    "CheckType": check_type,
+                    "Region": row.get("Region"),
+                    "Country/Region": row.get("Country/region"),
+                    "City": row.get("City"),
+                    "StoreName": row.get("Store Name"),
+                    "Creator": row.get("Creator"),
+                    "QuestionID": "0.0",
+                    "QuestionType": "Overall Evaluation",
+                    "QuestionText": "Overall Evaluation",
+                    "Result": None,
+                    "Comment": str(overall_comment).strip()
+                })
+
+    df_long = pd.DataFrame(rows)
+
+    if not df_long.empty:
+        df_long = df_long.sort_values(by=['ResultID', 'QuestionID']).reset_index(drop=True)
+
+        df_long["Comment_AutoTranslate"] = [
+            '=IFERROR(GOOGLETRANSLATE(INDIRECT("M"&ROW()),"auto","en"),"")'
+            for _ in range(len(df_long))
+        ]
+
+    return df_long
+
+
+# =========================
+# 2. Fact Submission
+# =========================
+def build_fact_submission(df_raw, form_sheet_name=None):
+
+    df_raw["Submission Time"] = pd.to_datetime(df_raw["Submission Time"])
+
+    has_check_type_col = "Check Type" in df_raw.columns
+
+    rows = []
+
+    for _, r in df_raw.iterrows():
+
+        submission_time = r.get("Submission Time")
+
+        if has_check_type_col:
+            check_type = r.get("Check Type")
+            check_type = "Self-check" if pd.isna(check_type) else str(check_type).strip()
+        else:
+            check_type = "Self-check"
+
+        rows.append({
+            "SubmissionID": r.get("Record Number"),
+            "SubmissionTime": submission_time,
+            "CheckType": check_type,
+            "Creator": r.get("Creator"),
+            "Region": r.get("Region"),
+            "Country/Region": r.get("Country/region"),
+            "City": r.get("City"),
+            "StoreName": r.get("Store Name"),
+            "FormSheet": form_sheet_name,
+        })
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values("SubmissionTime")
+    df["SubmissionTime"] = df["SubmissionTime"].dt.strftime("%Y/%m/%d %H:%M:%S")
+
+    return df
+
+
+# =========================
+# 3. Main runner
+# =========================
+def run_transformation(file_path):
+
+    xls = pd.ExcelFile(file_path, engine="openpyxl")
+
+    dfs_long = []
+    dfs_submission = []
+
+    for sheet in xls.sheet_names:
+        if "Quick Check" in sheet:
+            df_raw = pd.read_excel(xls, sheet_name=sheet)
+
+            df_long = transform_quickcheck_simple(df_raw)
+            df_long["FormSheet"] = sheet
+            dfs_long.append(df_long)
+
+            df_submission = build_fact_submission(df_raw, sheet)
+            dfs_submission.append(df_submission)
+
+    df_long_all = pd.concat(dfs_long, ignore_index=True)
+    df_fact_submission_all = pd.concat(dfs_submission, ignore_index=True)
+
+    return {
+        "fact_submission": df_fact_submission_all,
+        "fact_question": df_long_all
+    }
