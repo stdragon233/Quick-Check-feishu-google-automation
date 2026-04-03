@@ -4,6 +4,7 @@ from google.oauth2.service_account import Credentials
 import os
 import json
 
+
 print("🚀 Script started")
 
 from manipulation import run_transformation
