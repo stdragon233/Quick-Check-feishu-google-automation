@@ -55,12 +55,12 @@ def upload_df(sheet_name, df):
     # Prepare the data: list of headers + list of row values
     data_to_upload = [df_clean.columns.values.tolist()] + df_clean.values.tolist()
     
-    sheet.update(data_to_upload)
+    sheet.update(data_to_upload, value_input_option='USER_ENTERED')
     # --- FIX ENDS HERE ---
 
 # ===== Upload ALL =====
 upload_df("fact_submission", data["fact_submission"])
-upload_df("fact_question", data["fact_question"])
+upload_df("fact_question_long", data["fact_question"])
 upload_df("store_coverage", data["store_coverage"])
 upload_df("country_coverage", data["country_coverage"])
 upload_df("region_coverage", data["region_coverage"])
