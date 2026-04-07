@@ -42,17 +42,21 @@ print("✅ Transformation done")
 def upload_df(sheet_name, df):
     print(f"Uploading: {sheet_name}, rows={len(df)}")
     
-    # FIX: Replace NaN/inf with empty strings to avoid JSON errors
-    df_clean = df.replace([float('inf'), float('-inf')], 0).fillna("")
-
     try:
         sheet = spreadsheet.worksheet(sheet_name)
         sheet.clear()
     except:
-        sheet = spreadsheet.add_worksheet(title=sheet_name, rows="1000", cols="20")
+        sheet = spreadsheet.add_worksheet(title=sheet_name, rows="100", cols="20")
 
-    # Use the cleaned dataframe for the upload
-    sheet.update([df_clean.columns.values.tolist()] + df_clean.values.tolist())
+    # --- FIX STARTS HERE ---
+    # Convert all columns to string to handle Timestamps and NaNs for JSON serialization
+    df_clean = df.fillna("").astype(str)
+    
+    # Prepare the data: list of headers + list of row values
+    data_to_upload = [df_clean.columns.values.tolist()] + df_clean.values.tolist()
+    
+    sheet.update(data_to_upload)
+    # --- FIX ENDS HERE ---
 
 # ===== Upload ALL =====
 upload_df("fact_submission", data["fact_submission"])
