@@ -406,32 +406,6 @@ def build_dim_store_coverage(df_store_master, df_fact_submission, ref_month=None
 
     return df
 
-
-
-def build_country_coverage(df_store_coverage):
-    """
-    Build country-level store coverage table.
-    """
-
-    df = df_store_coverage.copy()
-
-    # Only count eligible stores
-    df = df[df["IsCountedStore"] == True]
-
-    agg = (
-        df.groupby(["Region", "MarketRegion", "Country"], as_index=False)
-          .agg(
-              TotalStores=("StoreID", "count"),
-              CoveredStores=("SubmittedThisMonth", "sum"),
-          )
-    )
-
-    agg["UncoveredStores"] = agg["TotalStores"] - agg["CoveredStores"]
-    agg["CoverageRate"] = agg["CoveredStores"] / agg["TotalStores"]
-
-    return agg
-
-
 def build_country_coverage(df_store_coverage):
     """
     Build country-level store coverage table.
@@ -485,7 +459,11 @@ def build_region_coverage(df_store_coverage):
 # Main runner (FULL)
 # =========================
 def run_transformation(file_path):
-
+    
+    # =========================================================
+    # 1. Load Excel (multiple Quick Check sheets)
+    # =========================================================
+   
     xls = pd.ExcelFile(file_path, engine="openpyxl")
 
     dfs_long = []
@@ -493,22 +471,37 @@ def run_transformation(file_path):
 
     for sheet in xls.sheet_names:
         if "Quick Check" in sheet:
-            df_raw = pd.read_excel(xls, sheet_name=sheet)
-
-            df_long = transform_quickcheck_simple(df_raw)
-            df_long["FormSheet"] = sheet
-            dfs_long.append(df_long)
-
-            df_submission = build_fact_submission(df_raw, sheet)
-            dfs_submission.append(df_submission)
+            try:
+                df_raw = pd.read_excel(xls, sheet_name=sheet, header=0)
+    
+                df_long = transform_quickcheck_simple(df_raw)
+                df_long["FormSheet"] = sheet
+                dfs_long.append(df_long)
+    
+                df_submission = build_fact_submission(df_raw, sheet)
+                dfs_submission.append(df_submission)
+    
+                print(f"✅ Loaded sheet: {sheet}")
+            except Exception as e:
+                print(f"❌ Failed sheet: {sheet}")
+                print(e)
 
     df_long_all = pd.concat(dfs_long, ignore_index=True)
     df_fact_submission_all = pd.concat(dfs_submission, ignore_index=True)
-
+    
+    # =========================================================
+    # 2. Load Store Master (dim table)
+    # =========================================================
+    
     df_store_master = pd.read_excel(
         xls,
-        sheet_name="门店明细（引用）"
+        sheet_name="门店明细（引用）",
+        header=0
     )
+
+    # =========================================================
+    # 3. Build Coverage Tables
+    # =========================================================
 
     df_store_coverage = build_dim_store_coverage(
         df_store_master,
