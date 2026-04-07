@@ -1,8 +1,8 @@
 import requests
 
 # 1️⃣ Acquire Feishu access token
-APP_ID = "cli_a945cc3d7938dcbc"
-APP_SECRET = "UxoDHpOyrEAFW8EwUFmymhrPYghPGCFc"
+APP_ID = os.environ.get("FEISHU_APP_ID")
+APP_SECRET = os.environ.get("FEISHU_APP_SECRET")
 
 url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
 payload = {"app_id": APP_ID, "app_secret": APP_SECRET}
