@@ -41,14 +41,18 @@ print("✅ Transformation done")
 # ===== Upload helper =====
 def upload_df(sheet_name, df):
     print(f"Uploading: {sheet_name}, rows={len(df)}")
+    
+    # FIX: Replace NaN/inf with empty strings to avoid JSON errors
+    df_clean = df.replace([float('inf'), float('-inf')], 0).fillna("")
 
     try:
         sheet = spreadsheet.worksheet(sheet_name)
         sheet.clear()
     except:
-        sheet = spreadsheet.add_worksheet(title=sheet_name, rows="2000", cols="100")
+        sheet = spreadsheet.add_worksheet(title=sheet_name, rows="1000", cols="20")
 
-    sheet.update([df.columns.values.tolist()] + df.values.tolist())
+    # Use the cleaned dataframe for the upload
+    sheet.update([df_clean.columns.values.tolist()] + df_clean.values.tolist())
 
 # ===== Upload ALL =====
 upload_df("fact_submission", data["fact_submission"])
