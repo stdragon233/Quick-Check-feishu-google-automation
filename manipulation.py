@@ -122,16 +122,14 @@ def transform_quickcheck_simple(df_raw):
 
 def build_fact_submission(df_raw, form_sheet_name=None):
 
+    # Convert Submission Time to datetime first
     df_raw["Submission Time"] = pd.to_datetime(df_raw["Submission Time"])
 
     has_check_type_col = "Check Type" in df_raw.columns
-
     rows = []
 
     for _, r in df_raw.iterrows():
-
         submission_time = r.get("Submission Time")
-
         if has_check_type_col:
             check_type = r.get("Check Type")
             check_type = "Self-check" if pd.isna(check_type) else str(check_type).strip()
@@ -140,7 +138,7 @@ def build_fact_submission(df_raw, form_sheet_name=None):
 
         rows.append({
             "SubmissionID": r.get("Record Number"),
-            "SubmissionTime": submission_time,
+            "SubmissionTime": submission_time,  # ✅ rename here immediately
             "CheckType": check_type,
             "Creator": r.get("Creator"),
             "Region": r.get("Region"),
@@ -151,21 +149,204 @@ def build_fact_submission(df_raw, form_sheet_name=None):
         })
 
     df = pd.DataFrame(rows)
+
+    # ✅ Now sort works
     df = df.sort_values("SubmissionTime")
+
+    # Keep SubmissionTime as string for export
     df["SubmissionTime"] = df["SubmissionTime"].dt.strftime("%Y/%m/%d %H:%M:%S")
 
     return df
 
 
 # ===== Your original coverage functions (UNCHANGED) =====
-def build_dim_store_coverage(df_store_master, df_fact_submission):
-    return df_store_master  # (keep your full original logic here)
+def build_dim_store_coverage(df_store_master, df_fact_submission, ref_month=None):
+    """
+    Build store-level coverage table using WIDE submission fact table.
+    """
+
+    df = df_store_master.copy()
+
+    # -----------------------------
+    # Rename store master columns
+    # -----------------------------
+    df = df.rename(columns={
+        "序号": "StoreID",
+        "Region": "Region",
+        "大区": "MarketRegion",
+        "Country": "Country",
+        "City": "City",
+        "Store Name": "StoreName",
+        "Model": "Model",
+        "Agent/Dealer/Distributor": "AgentDealerDistributor",
+        "Store Function": "StoreFunction",
+        "Open Time": "OpenTime",      # 🔹 renamed
+        "Address": "Address"
+    })
+
+    # keep OpenTime as YYYYMM string
+    df["OpenTime"] = df["OpenTime"].astype(str)
+
+    # -----------------------------
+    # Exclude temporary stores
+    # -----------------------------
+    df = df[~df["StoreFunction"].str.contains("Temporary", na=False)].copy()
+
+    # -----------------------------
+    # Open ≥ 3 months rule
+    # -----------------------------
+    open_dt = pd.to_datetime(df["OpenTime"], format="%Y%m", errors="coerce")
+    today = pd.Timestamp.today().normalize()
+
+    df["MonthsOpen"] = (
+        (today.year - open_dt.dt.year) * 12
+        + (today.month - open_dt.dt.month)
+    )
+
+    df["IsCountedStore"] = df["MonthsOpen"] >= 3
+
+    # -----------------------------
+    # Prepare submission data
+    # -----------------------------
+    sub = df_fact_submission.copy()
+    sub["SubmissionTime"] = pd.to_datetime(sub["SubmissionTime"], errors="coerce")
+
+    # Latest submission per store
+    latest = (
+        sub.sort_values("SubmissionTime")
+           .groupby("StoreName", as_index=False)
+           .last()
+    )
+
+    # -----------------------------
+    # Submission this month flag
+    # -----------------------------
+    if ref_month is None:
+        ref_month = today.to_period("M")
+
+    latest["SubmittedThisMonth"] = (
+        latest["SubmissionTime"].dt.to_period("M") == ref_month
+    ).astype(int)
+
+    # -----------------------------
+    # Select columns to merge
+    # -----------------------------
+    latest = latest[[
+        "StoreName",
+        "SubmissionTime",
+        "SubmittedThisMonth",
+        "Sales_PassRate",
+        "Delivery_PassRate",
+        "Aftersales_PassRate",
+        "Marketing_PassRate"
+    ]]
+
+    # -----------------------------
+    # Merge back to store master
+    # -----------------------------
+    df = df.merge(latest, on="StoreName", how="left")
+    df["SubmittedThisMonth"] = df["SubmittedThisMonth"].fillna(0).astype(int)
+
+    # -----------------------------
+    # Final column selection (IMPORTANT)
+    # -----------------------------
+    df = df[[
+        "StoreID",
+        "MarketRegion",
+        "Region",
+        "Country",
+        "Model",
+        "City",
+        "StoreName",
+        "AgentDealerDistributor",
+        "StoreFunction",
+        "OpenTime",
+        "Address",
+        "MonthsOpen",
+        "IsCountedStore",
+        "SubmissionTime",
+        "SubmittedThisMonth",
+        "Sales_PassRate",
+        "Delivery_PassRate",
+        "Aftersales_PassRate",
+        "Marketing_PassRate"
+    ]]
+
+    return df
+
+
 
 def build_country_coverage(df_store_coverage):
-    return df_store_coverage
+    """
+    Build country-level store coverage table.
+    """
+
+    df = df_store_coverage.copy()
+
+    # Only count eligible stores
+    df = df[df["IsCountedStore"] == True]
+
+    agg = (
+        df.groupby(["Region", "MarketRegion", "Country"], as_index=False)
+          .agg(
+              TotalStores=("StoreID", "count"),
+              CoveredStores=("SubmittedThisMonth", "sum"),
+          )
+    )
+
+    agg["UncoveredStores"] = agg["TotalStores"] - agg["CoveredStores"]
+    agg["CoverageRate"] = agg["CoveredStores"] / agg["TotalStores"]
+
+    return agg
+
+
+def build_country_coverage(df_store_coverage):
+    """
+    Build country-level store coverage table.
+    """
+
+    df = df_store_coverage.copy()
+
+    # Only count eligible stores
+    df = df[df["IsCountedStore"] == True]
+
+    agg = (
+        df.groupby(["Region", "MarketRegion", "Country"], as_index=False)
+          .agg(
+              TotalStores=("StoreID", "count"),
+              CoveredStores=("SubmittedThisMonth", "sum"),
+          )
+    )
+
+    agg["UncoveredStores"] = agg["TotalStores"] - agg["CoveredStores"]
+    agg["CoverageRate"] = agg["CoveredStores"] / agg["TotalStores"]
+
+    return agg
+
 
 def build_region_coverage(df_store_coverage):
-    return df_store_coverage
+    """
+    Build region-level store coverage table.
+    """
+
+    df = df_store_coverage.copy()
+
+    # Only count eligible stores
+    df = df[df["IsCountedStore"] == True]
+
+    agg = (
+        df.groupby(["Region"], as_index=False)
+          .agg(
+              TotalStores=("StoreID", "count"),
+              CoveredStores=("SubmittedThisMonth", "sum"),
+          )
+    )
+
+    agg["UncoveredStores"] = agg["TotalStores"] - agg["CoveredStores"]
+    agg["CoverageRate"] = agg["CoveredStores"] / agg["TotalStores"]
+
+    return agg
+
 
 
 # =========================
