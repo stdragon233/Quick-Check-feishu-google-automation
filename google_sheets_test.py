@@ -26,7 +26,7 @@ spreadsheet = client.open_by_key(SHEET_ID)
 print("✅ Opened Google Sheet")
 
 # ===== Check file exists =====
-file_path = "Red Carpet Quick Check 20260401.xlsx"
+file_path = "Red Carpet Quick Check 20260407.xlsx"
 
 if not os.path.exists(file_path):
     print("❌ FILE NOT FOUND:", file_path)
