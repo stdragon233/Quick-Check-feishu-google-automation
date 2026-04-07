@@ -15,30 +15,58 @@ def norm(s):
 
 
 def transform_quickcheck_simple(df_raw):
+    """Wide -> long transformation
+       + Safe CheckType handling
+       + Row-level Google Sheets translation formula
+       + Translation column BEFORE Comment
+       + Support for Overall Evaluation (QuestionID = 0.0)
+    """
+
+    import re
+    import unicodedata
+    import pandas as pd
+
+    def norm(s):
+        if pd.isna(s):
+            return ""
+        s = str(s).lower().strip()
+        s = ''.join(c for c in unicodedata.normalize('NFKD', s) if not unicodedata.combining(c))
+        s = re.sub(r'[^\w\s]', '', s)
+        s = re.sub(r'\s+', ' ', s).strip()
+        return s
 
     has_check_type_col = "Check Type" in df_raw.columns
 
     question_cols = [c for c in df_raw.columns if re.match(r'^\s*\d+\.\d+', str(c))]
     all_comment_cols = [c for c in df_raw.columns if 'comment' in c.lower()]
+    all_attach_cols = [c for c in df_raw.columns if 'attachment' in c.lower()]
 
+    # ✅ Detect Overall Evaluation column
     overall_eval_cols = [c for c in df_raw.columns if "overall evaluation" in c.lower()]
     overall_eval_col = overall_eval_cols[0] if overall_eval_cols else None
 
     comment_norm = {c: norm(c) for c in all_comment_cols}
+    attach_norm = {c: norm(c) for c in all_attach_cols}
 
     rows = []
 
-    for _, row in df_raw.iterrows():
+    for idx, row in df_raw.iterrows():
 
-        result_id = row.get('Record Number')
-        submission_time = row.get('Submission Time')
+        result_id = row.get('Record Number', None)
+        submission_time = row.get('Submission Time', None)
 
         if has_check_type_col:
             check_type = row.get("Check Type")
-            check_type = "Self-check" if pd.isna(check_type) else str(check_type).strip()
+            if pd.isna(check_type) or str(check_type).strip() == "":
+                check_type = "Self-check"
+            else:
+                check_type = str(check_type).strip()
         else:
             check_type = "Self-check"
 
+        # ==================================================
+        # Normal Questions
+        # ==================================================
         for qcol in question_cols:
 
             m = re.match(r'^\s*(\d+\.\d+)\s*(.*)$', str(qcol))
@@ -47,17 +75,23 @@ def transform_quickcheck_simple(df_raw):
             qtext_norm = norm(qtext)
 
             matched_comments = [c for c, cn in comment_norm.items() if qtext_norm and qtext_norm in cn]
+            no_pass_cols = [c for c in matched_comments if 'no pass' in c.lower() or 'nopass' in c.lower() or 'no_pass' in c.lower()]
+            pass_cols = [c for c in matched_comments if 'pass' in c.lower() and c not in no_pass_cols]
+            other_comments = [c for c in matched_comments if c not in no_pass_cols and c not in pass_cols]
 
             comment_val = None
-            for c in matched_comments:
-                v = row.get(c)
-                if pd.notna(v) and str(v).strip() != "":
-                    comment_val = str(v).strip()
-                    break
+            for c in (no_pass_cols + pass_cols + other_comments):
+                if c in df_raw.columns:
+                    v = row.get(c)
+                    if pd.notna(v) and str(v).strip() != "":
+                        comment_val = str(v).strip()
+                        break
 
-            result_val = row.get(qcol)
+            result_val = row.get(qcol, None)
+            has_result = not (pd.isna(result_val) or str(result_val).strip() == "")
+            has_comment = comment_val is not None
 
-            if pd.isna(result_val) and comment_val is None:
+            if not (has_result or has_comment):
                 continue
 
             qtype_digit = qid.split('.')[0] if qid else ''
@@ -70,8 +104,10 @@ def transform_quickcheck_simple(df_raw):
             }
             qtype = qtype_map.get(qtype_digit, "Other")
 
+            record_id = f"{result_id}_{qid}" if (result_id and qid) else (result_id or qid or "")
+
             rows.append({
-                "RecordID": f"{result_id}_{qid}",
+                "RecordID": record_id,
                 "ResultID": result_id,
                 "SubmissionTime": submission_time,
                 "CheckType": check_type,
@@ -87,11 +123,18 @@ def transform_quickcheck_simple(df_raw):
                 "Comment": comment_val
             })
 
+        # ==================================================
+        # Overall Evaluation (Special Case)
+        # ==================================================
         if overall_eval_col:
             overall_comment = row.get(overall_eval_col)
-            if pd.notna(overall_comment):
+
+            if pd.notna(overall_comment) and str(overall_comment).strip() != "":
+
+                record_id = f"{result_id}_0.0" if result_id else "0.0"
+
                 rows.append({
-                    "RecordID": f"{result_id}_0.0",
+                    "RecordID": record_id,
                     "ResultID": result_id,
                     "SubmissionTime": submission_time,
                     "CheckType": check_type,
@@ -110,50 +153,139 @@ def transform_quickcheck_simple(df_raw):
     df_long = pd.DataFrame(rows)
 
     if not df_long.empty:
-        df_long = df_long.sort_values(by=['ResultID', 'QuestionID']).reset_index(drop=True)
 
-        df_long["Comment_AutoTranslate"] = [
-            '=IFERROR(GOOGLETRANSLATE(INDIRECT("M"&ROW()),"auto","en"),"")'
-            for _ in range(len(df_long))
-        ]
+        df_long = df_long.sort_values(by=['ResultID','QuestionID']).reset_index(drop=True)
+
+        comment_index = df_long.columns.get_loc("Comment")
+        df_long.insert(comment_index, "Comment_AutoTranslate", "")
+
+        comment_col_index = df_long.columns.get_loc("Comment")
+
+        def excel_col_letter(n):
+            result = ""
+            while n >= 0:
+                result = chr(n % 26 + 65) + result
+                n = n // 26 - 1
+            return result
+
+        comment_letter = excel_col_letter(comment_col_index)
+
+        for i in range(len(df_long)):
+            formula = f'=IFERROR(GOOGLETRANSLATE(INDIRECT("{comment_letter}"&ROW()),"auto","en"),"")'
+            df_long.at[i, "Comment_AutoTranslate"] = formula
 
     return df_long
 
 
 def build_fact_submission(df_raw, form_sheet_name=None):
+    """
+    Build 1-row-per-submission fact table using form-calculated metrics.
+    """
 
-    # Convert Submission Time to datetime first
+    # ensure Submission Time is datetime (used internally only)
     df_raw["Submission Time"] = pd.to_datetime(df_raw["Submission Time"])
 
+    # NEW ✅ detect if Check Type column exists
     has_check_type_col = "Check Type" in df_raw.columns
+
+    section_map = {
+        "Sales": {
+            "rate": "Sales Pass Rate",
+            "pass": "Sales Pass Count",
+            "nopass": "Sales NoPass Count",
+            "na": "Sales NA Count"
+        },
+        "Delivery": {
+            "rate": "Delivery Pass Rate",
+            "pass": "Delivery Pass Count",
+            "nopass": "Delivery NoPass Count",
+            "na": "Delivery NA Count"
+        },
+        "Aftersales": {
+            "rate": "Aftersales Pass Rate",
+            "pass": "Aftersales Pass Count",
+            "nopass": "Aftersales NoPass Count",
+            "na": "Aftersales NA Count"
+        },
+        "Marketing": {
+            "rate": "Marketing Pass Rate",
+            "pass": "Marketing Pass Count",
+            "nopass": "Marketing NoPass Count",
+            "na": "Marketing NA Count"
+        }
+    }
+
     rows = []
 
     for _, r in df_raw.iterrows():
+
         submission_time = r.get("Submission Time")
+
+        # NEW ✅ safely extract Check Type
         if has_check_type_col:
             check_type = r.get("Check Type")
-            check_type = "Self-check" if pd.isna(check_type) else str(check_type).strip()
+            if pd.isna(check_type) or str(check_type).strip() == "":
+                check_type = "Self-check"
+            else:
+                check_type = str(check_type).strip()
         else:
             check_type = "Self-check"
 
-        rows.append({
+        row = {
             "SubmissionID": r.get("Record Number"),
-            "SubmissionTime": submission_time,  # ✅ rename here immediately
-            "CheckType": check_type,
+            "SubmissionTime": submission_time,
+            "CheckType": check_type,  # NEW ✅ added here
             "Creator": r.get("Creator"),
             "Region": r.get("Region"),
             "Country/Region": r.get("Country/region"),
             "City": r.get("City"),
             "StoreName": r.get("Store Name"),
             "FormSheet": form_sheet_name,
-        })
 
+            # derived columns
+            "YearMonth": submission_time.strftime("%Y%m"),
+            "Quarter": f"{submission_time.year} Q{submission_time.quarter}",
+            "Submission Count": 1
+        }
+
+        # section metrics + section submission counts
+        for section, cols in section_map.items():
+            prefix = section.replace(" ", "")
+
+            pass_cnt = r.get(cols["pass"]) or 0
+            nopass_cnt = r.get(cols["nopass"]) or 0
+            na_cnt = r.get(cols["na"]) or 0
+
+            row[f"{prefix}_PassRate"] = r.get(cols["rate"])
+            row[f"{prefix}_PassCount"] = pass_cnt
+            row[f"{prefix}_NoPassCount"] = nopass_cnt
+            row[f"{prefix}_NACount"] = na_cnt
+
+            row[f"{prefix}_SubmissionCount"] = (
+                1 if (pass_cnt + nopass_cnt + na_cnt) > 0 else 0
+            )
+
+        rows.append(row)
+
+    # build dataframe
     df = pd.DataFrame(rows)
 
-    # ✅ Now sort works
-    df = df.sort_values("SubmissionTime")
+    # force added columns to the very end
+    extra_cols = [
+        "YearMonth",
+        "Quarter",
+        "Submission Count",
+        "Sales_SubmissionCount",
+        "Delivery_SubmissionCount",
+        "Aftersales_SubmissionCount",
+        "Marketing_SubmissionCount"
+    ]
+    df = df[[c for c in df.columns if c not in extra_cols] + extra_cols]
 
-    # Keep SubmissionTime as string for export
+    # FINAL SORT (earliest → latest)
+    df = df.sort_values("SubmissionTime", ascending=True)
+
+    # restore SubmissionTime to original string format for export
     df["SubmissionTime"] = df["SubmissionTime"].dt.strftime("%Y/%m/%d %H:%M:%S")
 
     return df
