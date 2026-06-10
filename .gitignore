@@ -1,1 +1,11 @@
+# 忽略 Python 缓存文件
+__pycache__/
+*.pyc
+.venv/
+venv/
 
+# 忽略本地临时产生的数据缓存（防止污染云端）
+feishu_data_cache.pkl
+
+# 🚨 极其关键：严禁上传本地的 Google 密钥文件夹！
+secret/
