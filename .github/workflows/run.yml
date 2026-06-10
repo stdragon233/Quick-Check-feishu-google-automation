@@ -1,36 +1,53 @@
-name: Test Automation
+name: XPENG Store Check Data Automation Line
 
+# ⏰ 配置触发器
 on:
+  schedule:
+    # 💡 关键：GitHub 使用的是 UTC 时间（世界协调时）。
+    # 如果你想让它在北京时间每天早上 08:30 自动跑一次：
+    # 北京时间 08:30 减去 8 小时 = UTC 时间的 00:30。
+    - cron: '30 0 * * *'
+  
+  # 💡 额外赠送功能：允许你在 GitHub 网页上点击按钮“手动立刻触发跑一次”，方便随时测试！
   workflow_dispatch:
 
-  schedule:
-    - cron: '0 0 * * *'
 jobs:
-  run-script:
-    runs-on: ubuntu-latest
+  execute-automation:
+    runs-on: ubuntu-latest  # 使用最新的 Linux 虚拟电脑
 
     steps:
-      - name: Checkout code (LATEST)
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+    # 1. 把你的 GitHub 仓库代码下载到这台虚拟电脑上
+    - name: Checkout Repository Code
+      uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
+    # 2. 帮你在虚拟电脑上配置并启动 Python 环境
+    - name: Setup Python Environment
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.9'  # 保持和你本地一致的 Python 版本
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pandas openpyxl gspread google-auth
+    # 3. 自动根据 requirements.txt 安装所有需要的第三方依赖库
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
 
-      - name: List files (DEBUG)
-        run: ls -la
+    # 4. 执行第一步：从飞书抓取最新数据并洗入 Google Sheets
+    - name: Run Script 1 (Feishu to Google Sheets)
+      env:
+        # 🔗 核心：把你在 GitHub 后台存好的暗号，作为环境变量注入到虚拟电脑中，供代码读取
+        FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+        FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      run: |
+        python main.py
 
-      - name: Run script
-        run: python google_sheets_test.py
-        env:
-          GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
-          FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
-          FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+    # 5. 执行第二步：从 Google Sheets 将更新完的数据反向灌回飞书
+    - name: Run Script 2 (Google Sheets back to Feishu)
+      env:
+        # 同理，为反灌脚本也注入必要的密钥
+        FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
+        FEISHU_APP_SECRET: ${{ secrets.FEISHU_APP_SECRET }}
+        GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
+      run: |
+        python download_gs_to_feishu.py
