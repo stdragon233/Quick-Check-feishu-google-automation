@@ -131,21 +131,9 @@ def main():
     print("🎬 STARTING AUTOMATION: FEISHU TO GOOGLE SHEETS")
     print("==================================================")
     
-    CACHE_FILE = "feishu_data_cache.pkl"
-    
-    if os.path.exists(CACHE_FILE):
-        print(f"📦 [CACHE HIT] Found local data cache '{CACHE_FILE}'. Loading instantly...")
-        with open(CACHE_FILE, "rb") as f:
-            feishu_data = pickle.load(f)
-        print(f"⚡ Successfully loaded {len(feishu_data)} tables from local cache!")
-    else:
-        print("🔍 [CACHE MISS] No local cache found. Fetching fresh data from Feishu...")
-        feishu_data = fetch_all_feishu_data()
-        
-        print(f"💾 Saving downloaded data to local cache '{CACHE_FILE}' for future fast testing...")
-        with open(CACHE_FILE, "wb") as f:
-            pickle.dump(feishu_data, f)
-        print("Keep cache saved.")
+    # 直接下载最新数据（GitHub Actions 和本地都统一行为）
+    print("🔍 Fetching fresh data from Feishu...")
+    feishu_data = fetch_all_feishu_data()
     
     # =========================================================================
     # 🆕 分离门店明细表（如果存在）
