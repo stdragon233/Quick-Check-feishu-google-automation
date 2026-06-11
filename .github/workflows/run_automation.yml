@@ -45,7 +45,7 @@ jobs:
     - name: Wait for Google Sheets Translation (5 mins)
       run: |
         echo "⏰ Data uploaded to Google. Sleeping for 300 seconds to allow formula & translation syncing..."
-        sleep 300
+        sleep 60
         echo "✅ Buffer time ended. Resuming pipeline..."
 
     # 6. 【动作二】执行反向灌注：从 Google Sheets 将更新/调整完的数据，重新倒灌回飞书 Wiki
