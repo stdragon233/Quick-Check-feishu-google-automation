@@ -6,7 +6,7 @@ on:
     # 💡 关键：GitHub 使用的是 UTC 时间（世界协调时）。
     # 如果你想让它在北京时间每天早上 08:30 自动跑一次：
     # 北京时间 08:30 减去 8 小时 = UTC 时间的 00:30。
-    - cron: '30 23 * * *'
+    - cron: '30 20 * * *'
   
   # 💡 额外赠送功能：允许你在 GitHub 网页上点击按钮“手动立刻触发跑一次”，方便随时测试！
   workflow_dispatch:
@@ -41,14 +41,14 @@ jobs:
       run: |
         python main.py
 
-    # ⏳ 5. 【新增智能缓冲】让云端电脑原地休眠 5 分钟，静静等待 Google Sheets 自动翻译和公式计算完成
-    - name: Wait for Google Sheets Translation (5 mins)
+    # ⏳ 5. 【新增智能缓冲】让云端电脑原地休眠 1 分钟，静静等待 Google Sheets 自动翻译和公式计算完成
+    - name: Wait for Google Sheets Translation (1 mins)
       run: |
-        echo "⏰ Data uploaded to Google. Sleeping for 300 seconds to allow formula & translation syncing..."
+        echo "⏰ Data uploaded to Google. Sleeping for 60 seconds to allow formula & translation syncing..."
         sleep 60
         echo "✅ Buffer time ended. Resuming pipeline..."
 
-    # 6. 【动作二】执行反向灌注：从 Google Sheets 将更新/调整完的数据，重新倒灌回飞书 Wiki
+    # 6. 【动作二】执行反向灌注：从 Google Sheets 将更新/调整完的数据，重新倒灌回飞书 sheet
     - name: Run Script 2 (Google Sheets back to Feishu)
       env:
         FEISHU_APP_ID: ${{ secrets.FEISHU_APP_ID }}
