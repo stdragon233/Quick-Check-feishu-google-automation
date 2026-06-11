@@ -150,8 +150,14 @@ def main():
 
     print("\n⚙️ Processing and transforming data...")
     for sheet_name, df_raw in feishu_data.items():
+        # 第一层保险：跳过空表
         if df_raw.empty or len(df_raw) == 0:
             print(f"  ⏩ Passed empty sheet: [{sheet_name}]")
+            continue
+        
+        # 第二层保险：只处理包含 "check" 的表（不区分大小写）
+        if "check" not in sheet_name.lower():
+            print(f"  ⏭️ Skipped non-check sheet: [{sheet_name}] (no 'check' in name)")
             continue
 
         try:
