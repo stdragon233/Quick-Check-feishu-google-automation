@@ -87,7 +87,8 @@ def get_feishu_tenant_access_token():
 
 def extract_spreadsheet_token_from_wiki(feishu_token, wiki_token):
     """通过 Wiki Token 置换出多维表格真正的 Spreadsheet Token"""
-    url = f"https://open.feishu.cn/open-apis/wiki/v2/nodes/{wiki_token}"
+    # url = f"https://open.feishu.cn/open-apis/wiki/v2/nodes/{wiki_token}"
+    url = f"https://open.feishu.cn/open-apis/wiki/v2/spaces/get_node?token={wiki_token}"
     headers = {"Authorization": f"Bearer {feishu_token}"}
     try:
         res = requests.get(url, headers=headers)
