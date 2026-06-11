@@ -5,7 +5,6 @@ import time
 import os
 import pickle
 
-# 💡 安全升级：完美引入 config 里的统一凭证
 from config import (
     FEISHU_APP_ID,
     FEISHU_APP_SECRET,
@@ -16,14 +15,15 @@ from config import (
 )
 from data_transformers import (
     transform_quickcheck_adaptive, 
-    build_fact_submission
+    build_fact_submission,
+    enrich_store_info
 )
 from google_uploader import upload_dataframe_to_google_sheet
-
 
 # =============================================================================
 # 📥 1. 飞书数据纯内存、单线程、带重试下载函数
 # =============================================================================
+
 def fetch_all_feishu_data():
     """从飞书 API 串行下载所有未被排除的多维表格，并以字典形式返回 {"表名": DataFrame}"""
     token_url = "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal"
@@ -39,144 +39,173 @@ def fetch_all_feishu_data():
         sys.exit(1)
 
     headers = {"Authorization": f"Bearer {token}"}
-    tables_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{FEISHU_APP_TOKEN}/tables"
-    
-    try:
-        tables_res = requests.get(tables_url, headers=headers)
-        tables_data = tables_res.json()
-        if tables_data.get("code") != 0:
-            print("❌ Failed to fetch tables list:", tables_data.get("msg"))
-            sys.exit(1)
-        tables = tables_data.get("data", {}).get("items", [])
-    except Exception as e:
-        print(f"❌ Network error when fetching tables list: {e}")
+    print("✅ Feishu Token acquired successfully.")
+
+    list_tables_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{FEISHU_APP_TOKEN}/tables"
+    tables_res = requests.get(list_tables_url, headers=headers)
+    tables_data = tables_res.json()
+
+    if tables_data.get("code") != 0:
+        print(f"❌ Failed to fetch Feishu tables list: {tables_data.get('msg')}")
         sys.exit(1)
 
-    data_dict = {}
-    for t in tables:
-        t_name = t.get("name")
-        t_id = t.get("table_id")
-        
-        if t_name in EXCLUDE_TABLES:
-            print(f"🚫 [Skip] Sub-tab [{t_name}] is in Blacklist.")
+    all_fetched_tables = tables_data.get("data", {}).get("items", [])
+    
+    tables_to_download = []
+    for table in all_fetched_tables:
+        if table["name"] in EXCLUDE_TABLES or table["table_id"] in EXCLUDE_TABLES:
+            print(f"⏭️ Skipping excluded table: {table['name']}")
             continue
-            
-        print(f"📥 [Downloading] Sub-tab: [{t_name}] (ID: {t_id})...")
+        tables_to_download.append(table)
+
+    print(f"📋 Total tables in Feishu: {len(all_fetched_tables)}")
+    print(f"🔒 Sequentially downloading {len(tables_to_download)} tables to memory (Stable Mode)...")
+
+    all_dataframes = {}
+
+    for index, table in enumerate(tables_to_download, 1):
+        table_id = table["table_id"]
+        sheet_name = table["name"]
         
-        records = []
-        page_token = None
+        records_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{FEISHU_APP_TOKEN}/tables/{table_id}/records"
+        
+        all_records = []
         has_more = True
-        
-        records_url = f"https://open.feishu.cn/open-apis/bitable/v1/apps/{FEISHU_APP_TOKEN}/tables/{t_id}/records"
+        page_token = ""
         
         while has_more:
             params = {"page_size": 500}
             if page_token:
                 params["page_token"] = page_token
                 
-            retry_count = 3
+            max_retries = 3
             success = False
             
-            for attempt in range(retry_count):
+            for attempt in range(1, max_retries + 1):
                 try:
-                    r_res = requests.get(records_url, headers=headers, params=params, timeout=30)
-                    r_json = r_res.json()
-                    if r_json.get("code") == 0:
-                        data_payload = r_json.get("data", {})
-                        items = data_payload.get("items", [])
-                        for item in items:
-                            fields = item.get("fields", {})
-                            fields["Record ID"] = item.get("record_id")
-                            records.append(fields)
-                            
-                        has_more = data_payload.get("has_more", False)
-                        page_token = data_payload.get("page_token", None)
-                        success = True
+                    res = requests.get(records_url, headers=headers, params=params)
+                    data = res.json()
+                    
+                    if data.get("code") == 1254003 or "Data not ready" in data.get("msg", ""):
+                        wait_time = attempt * 2.0
+                        print(f"  ⏳ [{sheet_name}] Server busy. Retrying in {wait_time}s... ({attempt}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    elif data.get("code") != 0:
+                        print(f"  ⚠️ Feishu Error reply in '{sheet_name}': {data.get('msg')}")
                         break
                     else:
-                        print(f"  ⚠️ Error code {r_json.get('code')}, retrying ({attempt+1}/{retry_count})...")
-                        time.sleep(2)
-                except Exception as ex:
-                    print(f"  ⚠️ Exception occurred: {ex}, retrying ({attempt+1}/{retry_count})...")
+                        success = True
+                        break
+                except Exception as e:
+                    print(f"  ⚠️ Network glitch in '{sheet_name}': {e}. Retrying in 2s...")
                     time.sleep(2)
                     
             if not success:
-                print(f"❌ Failed to sync table [{t_name}] entirely after 3 retries.")
-                break
+                print(f"\n❌ [CRITICAL ERROR] Failed to download '{sheet_name}' after {max_retries} attempts.")
+                sys.exit(1)
                 
-            time.sleep(0.1)
+            items = data.get("data", {}).get("items", [])
+            all_records.extend(items)
+            has_more = data.get("data", {}).get("has_more", False)
+            page_token = data.get("data", {}).get("page_token", "")
             
-        df = pd.DataFrame(records)
-        data_dict[t_name] = df
-        print(f"  ✨ Downloaded {len(df)} rows for [{t_name}]")
-        
-    return data_dict
+        if all_records:
+            df = pd.DataFrame([item["fields"] for item in all_records])
+        else:
+            df = pd.DataFrame()
+            
+        all_dataframes[sheet_name] = df
+        print(f"  [{index}/{len(tables_to_download)}] ✅ Successfully loaded: '{sheet_name}' ({len(df)} rows)")
+        time.sleep(0.1)
+
+    print("\n🎉 All target data successfully loaded into memory python dictionary!")
+    return all_dataframes
 
 
 # =============================================================================
-# 🚀 2. 主执行调度引擎（智能环境感知自适应版）
+# 🚀 2. 主调度流程 (The Execution Grandmaster)
 # =============================================================================
 def main():
     print("==================================================")
-    print("🎬 STARTING SYNC DIRECTION: FEISHU TO GOOGLE SHEETS")
+    print("🎬 STARTING AUTOMATION: FEISHU TO GOOGLE SHEETS")
     print("==================================================")
     
-    cache_file = "feishu_data_cache.pkl"
+    CACHE_FILE = "feishu_data_cache.pkl"
     
-    # 💡 智能拦截：如果在 GitHub Actions 上运行（能检测到密钥环境变量），强制每次都下载最新数据
-    if os.environ.get("GOOGLE_CREDENTIALS"):
-        print("☁️ Running on GitHub Actions. Forcing fresh download from Feishu API...")
-        feishu_tables = fetch_all_feishu_data()
+    if os.path.exists(CACHE_FILE):
+        print(f"📦 [CACHE HIT] Found local data cache '{CACHE_FILE}'. Loading instantly...")
+        with open(CACHE_FILE, "rb") as f:
+            feishu_data = pickle.load(f)
+        print(f"⚡ Successfully loaded {len(feishu_data)} tables from local cache!")
     else:
-        # 💻 本地调试模式：保留本地缓存机制，防止本地测试时频繁下载耗费时间
-        if os.path.exists(cache_file):
-            print(f"📦 [Local Mode] Found local cache '{cache_file}'. Loading historical data...")
-            with open(cache_file, 'rb') as f:
-                feishu_tables = pickle.load(f)
-        else:
-            print("💻 [Local Mode] No local cache found. Initiating full download...")
-            feishu_tables = fetch_all_feishu_data()
-            print(f"💾 Saving downloaded data to local cache '{cache_file}' for future fast debugging...")
-            with open(cache_file, 'wb') as f:
-                pickle.dump(feishu_tables, f)
+        print("🔍 [CACHE MISS] No local cache found. Fetching fresh data from Feishu...")
+        feishu_data = fetch_all_feishu_data()
+        
+        print(f"💾 Saving downloaded data to local cache '{CACHE_FILE}' for future fast testing...")
+        with open(CACHE_FILE, "wb") as f:
+            pickle.dump(feishu_data, f)
+        print("Keep cache saved.")
+    
+    # =========================================================================
+    # 🆕 分离门店明细表（如果存在）
+    # =========================================================================
+    store_master_df = None
+    if "门店明细（引用）" in feishu_data:
+        store_master_df = feishu_data.pop("门店明细（引用）")
+        print(f"📋 已分离门店明细表，共 {len(store_master_df)} 行")
+    else:
+        print("⚠️ 未找到门店明细表，将跳过地理位置信息修正")
+    
+    dfs_long_pool = []
+    dfs_submission_pool = []
 
-    df_long_list = []
-    df_fact_submission_list = []
-
-    print("\n🔮 Transforming sub-tables data...")
-    for sheet_name, df_raw in feishu_tables.items():
-        if df_raw.empty:
+    print("\n⚙️ Processing and transforming data...")
+    for sheet_name, df_raw in feishu_data.items():
+        if df_raw.empty or len(df_raw) == 0:
+            print(f"  ⏩ Passed empty sheet: [{sheet_name}]")
             continue
 
-        config = SHEET_CONFIG.get(sheet_name, {"structure": "simple", "category": "Quick Check"})
-        struct_v = config.get("structure", "simple")
-        cat_v = config.get("category", "Quick Check")
+        try:
+            # 💡 从你的 SHEET_CONFIG 里面动态获取每个国家表专属的 structure 和 category 设定
+            # 如果没配，默认作为 "simple" 和 "Quick Check" 处理
+            cfg = SHEET_CONFIG.get(sheet_name, {"structure": "simple", "category": "Quick Check"})
+            struct_ver = cfg.get("structure", "simple")
+            cat_ver = cfg.get("category", "Quick Check")
 
-        # 1. 提炼长表明细数据
-        df_long = transform_quickcheck_adaptive(
-            df_raw, 
-            sheet_name=sheet_name, 
-            structure_version=struct_v, 
-            category_version=cat_v,
-            maps_config=VERSION_MAPS
-        )
-        if not df_long.empty:
-            df_long_list.append(df_long)
+            # 1. 原汁原味宽转长表转化 (动态传入国家表对应的配置)
+            df_long = transform_quickcheck_adaptive(
+                df_raw, 
+                sheet_name=sheet_name, 
+                structure_version=struct_ver, 
+                category_version=cat_ver,
+                maps_config=VERSION_MAPS
+            )
+            if not df_long.empty:
+                dfs_long_pool.append(df_long)
+                
+            # 2. 原汁原味事实提交明细表提取
+            df_submission = build_fact_submission(df_raw, form_sheet_name=sheet_name)
+            if not df_submission.empty:
+                dfs_submission_pool.append(df_submission)
+                
+            print(f"  ✨ Successfully transformed sheet: [{sheet_name}]")
+        except Exception as e:
+            print(f"  ❌ Error encountered while analyzing [{sheet_name}]: {e}")
+            import traceback
+            traceback.print_exc()
+            print("🛑 Program terminates to avoid partial upload.")
+            sys.exit(1)
 
-        # 2. 提炼提交次数统计事实数据
-        df_fact = build_fact_submission(df_raw, form_sheet_name=sheet_name)
-        if not df_fact.empty:
-            df_fact_submission_list.append(df_fact)
-
-    # 聚合汇总
-    if df_long_list:
-        df_long_all = pd.concat(df_long_list, ignore_index=True)
+    # 聚合总表
+    if dfs_long_pool:
+        df_long_all = pd.concat(dfs_long_pool, ignore_index=True)
     else:
         df_long_all = pd.DataFrame()
 
-    if df_fact_submission_list:
-        df_fact_submission_all = pd.concat(df_fact_submission_list, ignore_index=True)
-        # 完美细节：因为现在时间是 YYYY/MM/DD 字符串格式，直接 sort_values 同样可以按时间完美排序
+    if dfs_submission_pool:
+        df_fact_submission_all = pd.concat(dfs_submission_pool, ignore_index=True)
+        
         if "SubmissionTime" in df_fact_submission_all.columns:
             df_fact_submission_all = df_fact_submission_all.sort_values(by="SubmissionTime").reset_index(drop=True)
     else:
@@ -186,9 +215,22 @@ def main():
     print(f"  -> Total records in fact_question_long: {len(df_long_all)} rows.")
     print(f"  -> Total records in fact_submission: {len(df_fact_submission_all)} rows.")
 
-    # =============================================================================
+    # =========================================================================
+    # 🆕 使用门店明细表修正地理位置信息（方案B：转换后修正）
+    # =========================================================================
+    if store_master_df is not None and not store_master_df.empty:
+        print("\n📍 Enriching store location information...")
+        df_long_all, df_fact_submission_all = enrich_store_info(
+            df_long_all,
+            df_fact_submission_all,
+            store_master_df
+        )
+    else:
+        print("\n⚠️ 跳过门店地理位置信息修正（无门店明细表）")
+
+    # =========================================================================
     # 📤 3. 一键覆盖推送到 Google Sheets 云端
-    # =============================================================================
+    # =========================================================================
     print("\n🚀 Initiating cloud sync via Google Sheets API...")
     
     # 1. 同步长表大盘
@@ -196,9 +238,9 @@ def main():
     
     # 2. 同步提交统计明细
     upload_dataframe_to_google_sheet("fact_submission", df_fact_submission_all)
-
+    
     print("\n==================================================")
-    print("🎉 ALL DATA SUCCESSFULLY STREAMED TO GOOGLE SHEETS!")
+    print("🎉 ALL SYSTEM TASKS SUCCESSFULLY EXECUTED!")
     print("==================================================")
 
 if __name__ == "__main__":
