@@ -40,7 +40,8 @@ EXCLUDE_TABLES = [
     "Sweden Email Collection",
     "Submission Records",
     "Store Coverage Count",
-    "Count Down"
+    "Count Down",
+    "Weekly Summary"
 ]
 
 
@@ -79,4 +80,5 @@ SHEET_CONFIG = {
     "Indonesia Regional Check V2":  {"structure": "nested", "category": "Regional Check 2.0"},
     "Hong Kong Regional Check":     {"structure": "nested", "category": "Regional Check 2.0"},
     "MEA Regional Check":           {"structure": "nested", "category": "Regional Check 2.0"},
+    "HK Regional Check"             {"structure": "nested", "category": "Regional Check 2.0"}
 }
