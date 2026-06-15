@@ -40,11 +40,11 @@ jobs:
       run: |
         python main.py
 
-    # ⏳ 5. 【新增智能缓冲】让云端电脑原地休眠 1 分钟，静静等待 Google Sheets 自动翻译和公式计算完成
-    - name: Wait for Google Sheets Translation (1 mins)
+    # ⏳ 5. 【新增智能缓冲】让云端电脑原地休眠 2 分钟，静静等待 Google Sheets 自动翻译和公式计算完成
+    - name: Wait for Google Sheets Translation (2 mins)
       run: |
-        echo "⏰ Data uploaded to Google. Sleeping for 60 seconds to allow formula & translation syncing..."
-        sleep 60
+        echo "⏰ Data uploaded to Google. Sleeping for 120 seconds to allow formula & translation syncing..."
+        sleep 120
         echo "✅ Buffer time ended. Resuming pipeline..."
 
     # 6. 【动作二】执行反向灌注：从 Google Sheets 将更新/调整完的数据，重新倒灌回飞书 sheet
