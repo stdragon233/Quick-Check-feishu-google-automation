@@ -90,7 +90,7 @@ SHEET_CONFIG = {
     "Norway Regional Check":        {"structure": "nested", "category": "Regional Check 2.0"},
     "Global Regional Check":        {"structure": "nested", "category": "Regional Check 2.0"},
     "Denmark Regional Check":       {"structure": "nested", "category": "Regional Check 2.0"},
-    "Netherlands Regional Check":   {"structure": "nested", "category": "Regional Check 2.0"},
+    "NEBELUX Regional Check":       {"structure": "nested", "category": "Regional Check 2.0"},
     "Thailand Regional Check":      {"structure": "nested", "category": "Regional Check 2.0"},
     "Indonesia Regional Check V2":  {"structure": "nested", "category": "Regional Check 2.0"},
     "Hong Kong Regional Check":     {"structure": "nested", "category": "Regional Check 2.0"},
