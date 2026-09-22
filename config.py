@@ -84,6 +84,8 @@ VERSION_MAPS = {
 SHEET_CONFIG = {
     # 法国是 nested 结构，但沿用老版 Quick Check 分类
     "France Quick Check 2.0":       {"structure": "nested", "category": "Quick Check"},
+    "Spain Regional Check":         {"structure": "nested", "category": "Quick Check"},
+    "Portugal Regional Check":      {"structure": "nested", "category": "Quick Check"},
     
     # 新版 Regional Check 阵营：全部是 nested 结构 + 新版 Regional Check 2.0 分类
     "Sweden Regional Check":        {"structure": "nested", "category": "Regional Check 2.0"},
@@ -94,9 +96,12 @@ SHEET_CONFIG = {
     "Thailand Regional Check":      {"structure": "nested", "category": "Regional Check 2.0"},
     "Indonesia Regional Check V2":  {"structure": "nested", "category": "Regional Check 2.0"},
     "Hong Kong Regional Check":     {"structure": "nested", "category": "Regional Check 2.0"},
+    "HK & SG Regional Check":       {"structure": "nested", "category": "Regional Check 2.0"},
     "MEA Regional Check":           {"structure": "nested", "category": "Regional Check 2.0"},
     "HK Regional Check":            {"structure": "nested", "category": "Regional Check 2.0"},
     "Thailand Excellence Check":    {"structure": "simple", "category": "Excellence Check"},
     "Indonesia Excellence Check":   {"structure": "simple", "category": "Excellence Check"},
     "Malaysia Standard Quick Check":{"structure": "simple", "category": "Malaysia Standard Check"}
+
+    
 }
