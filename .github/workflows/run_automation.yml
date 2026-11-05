@@ -12,7 +12,7 @@ on:
 
 jobs:
   execute-automation:
-    runs-on: ubuntu-latest  # 使用最新的 Linux 虚拟电脑
+    runs-on: ubuntu-24.04  # 使用最新的 Linux 虚拟电脑
 
     steps:
     # 1. 把你的 GitHub 仓库代码下载到这台虚拟电脑上
